@@ -1,0 +1,9 @@
+{
+    "batch_size": 64,
+    "epochs": 180,
+    "epochs_finetuning": 10,
+    "learning_rate": 0.1,
+    "learning_rate_finetuning": 0.001,
+    "momentum": 0.9,
+    "weight_decay": 0.005
+}
