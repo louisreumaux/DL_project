@@ -6,6 +6,12 @@ from yolo_dataset import CarDataset
 from torch.utils.data import DataLoader
 import json
 
+
+''' 
+This script is used to visualise the results of a YOLOv2 model trained on a custom dataset with given weights. 
+'''
+
+
 torch.manual_seed(1)
 if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
@@ -17,7 +23,7 @@ with open('parameters/yolo_parameters.json', 'r') as f:
 
 anchors = parameters["anchors"]
 num_classes = parameters["classes"]
-test_images_folder = "data_yolo/training_images/"
+test_images_folder = "data_yolo/testing_images/"
 
 model = YOLO(num_classes, anchors)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -33,7 +39,7 @@ model.load_state_dict(checkpoint)
 model.eval()
 
 
-with open('data_yolo/dictionnary_bounding_boxes.pkl', 'rb') as fp:
+with open('data_yolo/dictionnary_bounding_boxes_test.pkl', 'rb') as fp:
     data_bounding_boxes = pickle.load(fp)
 
 
@@ -52,10 +58,11 @@ for i in range(len(imgs)):
     output_tensor = output[i].detach().cpu()
     output_tensor = output_tensor.permute(1,2,0)
     output_tensor = output_tensor.view(13, 13, 5, 5)
-    boxes = output_tensor_to_boxes(output_tensor)
+    boxes = output_tensor_to_boxes(output_tensor, anchors)
     boxes = nonmax_suppression(boxes,0.2)
     img = imgs[i].permute(1,2,0).cpu().numpy()
 
     true_boxes = target_tensor_to_boxes(targets[i])
-    img = visualize_bbox(img.copy(),color=(255,0,0), boxes=[], thickness=2, draw_center=False)
+    img = visualize_bbox(img.copy(),color=(255,0,0), boxes=boxes, thickness=1, draw_center=False)
+    img = visualize_bbox(img.copy(),color=(0,255,0), boxes=true_boxes, thickness=1, draw_center=False)
     plot_img(img, size=(4,4))

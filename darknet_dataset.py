@@ -6,6 +6,9 @@ from albumentations.pytorch.transforms import ToTensor, ToTensorV2
 import numpy as np
 
 class CustomDataset(torch.utils.data.Dataset):
+    '''
+    Custom dataset class for handling image data with associated labels.
+    '''
     def __init__(self, image_paths, labels, input_size=224):
         self.image_paths = image_paths
         self.labels = labels

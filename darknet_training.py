@@ -8,6 +8,10 @@ from darknet_dataset import CustomDataset
 import json
 import numpy as np
 
+'''
+This script trains a Darknet19 model on a custom dataset and saves the trained model weights.
+'''
+
 with open('parameters/darknet_parameters.json', 'r') as f:
     parameters = json.load(f)
 
@@ -38,8 +42,6 @@ train_dataset_finetuning = CustomDataset(train_image_paths, train_labels, input_
 train_loader_finetuning = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
 model = model.to(device)
-
-
 criterion = nn.BCEWithLogitsLoss()
 optimizer = torch.optim.SGD(model.parameters(
 ), lr=learning_rate, weight_decay=weight_decay, momentum=momentum)

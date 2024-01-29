@@ -5,6 +5,11 @@ from darknet_training import Darknet19, CustomDataset
 import torch.nn.functional as F
 import numpy as np
 
+"""
+This script loads a pre-trained Darknet19 model, evaluates it on a test dataset,
+and computes the accuracy of the model's predictions.
+"""
+
 model = Darknet19()
 
 # Load the weights from the checkpoint file
@@ -55,3 +60,5 @@ def accuracy_computation():
     total = class_total[0] + class_total[1]
     print('Accuracy of the network on the test images: %.2f %%' %
         (100 * correct / total))
+
+accuracy_computation()

@@ -4,6 +4,20 @@ import math
 
 class YoloLoss(nn.Module):
 
+    '''
+    YOLOv2 Loss Function
+
+    Args:
+        num_classes (int): Number of classes in the dataset.
+        device (torch.device): Device for computations.
+        grid_size (int): Size of the grid.
+        anchors (int): Number of anchors.
+        lambda_xy (float): Weight for xy loss.
+        lambda_wh (float): Weight for wh loss.
+        lambda_conf (float): Weight for object confidence loss.
+        lambda_noobj (float): Weight for no-object confidence loss.
+    '''
+
     def __init__(self, num_classes, device, grid_size = 13, anchors = 5, lambda_xy = 10, lambda_wh = 0.1, lambda_conf = 10, lambda_noobj = 1):
         super(YoloLoss, self).__init__()
         
@@ -24,8 +38,8 @@ class YoloLoss(nn.Module):
         W_grid, H_grid = self.grid_size, self.grid_size
         predictions = predictions.view(-1, H_grid, W_grid, self.num_anchors, 4+1+self.num_classes)
 
-        pred_xy, pred_wh, pred_obj_prob, _ = post_process_output(predictions, self.anchors, self.num_anchors, self.device)
-        true_xy, true_wh, true_obj_prob, _ = post_process_target(target)
+        pred_xy, pred_wh, pred_obj_prob = post_process_output(predictions, self.anchors, self.num_anchors, self.device)
+        true_xy, true_wh, true_obj_prob = post_process_target(target)
         
         # Calculate areas of pred_bbox
         pred_ul = pred_xy - 0.5*pred_wh
@@ -61,30 +75,50 @@ class YoloLoss(nn.Module):
 
 
 def post_process_output(output, anchors, num_anchors, device):
-    """Convert output of model to pred_xywh"""
-    # xy
+    """
+    Convert the output of the model to predicted bounding box coordinates.
+
+    Args:
+        output (torch.Tensor): Output tensor from the model.
+        anchors (list): List of anchor box sizes.
+        num_anchors (int): Number of anchor boxes.
+        device (torch.device): Device for computations.
+
+    Returns:
+        tuple: A tuple containing:
+            - xy (torch.Tensor): Predicted xy coordinates of bounding boxes.
+            - wh (torch.Tensor): Predicted width and height of bounding boxes.
+            - obj_prob (torch.Tensor): Predicted objectness probability.
+    """
+
     xy = torch.sigmoid(output[:,:,:,:,:2])
 
-    # wh
     wh = output[:,:,:,:,2:4]
-    
     anchors_wh = torch.Tensor(anchors).view(1,1,1,num_anchors,2).to(device)
     wh = ((torch.sigmoid(wh) * 2) ** 1.6) * anchors_wh
 
-    # objectness confidence
     obj_prob = torch.sigmoid(output[:,:,:,:,4:5])
     
-    return xy, wh, obj_prob, 0
+    return xy, wh, obj_prob
 
 def post_process_target(target_tensor):
     """
-    Separate the target tensor into individual components: xy, wh, object probability, class distribution.
+    Separate the target tensor into individual components: xy, wh, object probability.
+
+    Args:
+        target_tensor (torch.Tensor): Target tensor containing bounding box information.
+
+    Returns:
+        tuple: A tuple containing:
+            - xy (torch.Tensor): Ground truth xy coordinates of bounding boxes.
+            - wh (torch.Tensor): Ground truth width and height of bounding boxes.
+            - obj_prob (torch.Tensor): Ground truth objectness probability.
     """
     xy = target_tensor[:,:,:,:,:2]
     wh = target_tensor[:,:,:,:,2:4]
     obj_prob = target_tensor[:,:,:,:,4:5]
 
-    return xy, wh, obj_prob, 0
+    return xy, wh, obj_prob
 
 def square_error(output, target):
     return (output-target)**2
@@ -92,10 +126,21 @@ def square_error(output, target):
 
 
 class YoloLoss2(nn.Module):
-    """
-    Calculate the loss for yolo (v1) model
-    (1,1,1,10,0.1)
-    """
+    '''
+    YOLOv2 Loss Function 2
+
+    Args:
+        num_classes (int): Number of classes in the dataset.
+        device (torch.device): Device for computations.
+        grid_size (int): Size of the grid.
+        anchors (int): Number of anchors.
+        lambda_coord_xy (float): Weight for xy loss.
+        lambda_coord_wh (float): Weight for wh loss.
+        lambda_coord_noobj_xy (float): Weight for xy loss in no-object regions.
+        lambda_coord_noobj_wh (float): Weight for wh loss in no-object regions.
+        lambda_conf (float): Weight for object confidence loss.
+        lambda_noobj (float): Weight for no-object confidence loss.
+    '''
 
     def __init__(self, num_classes, device, grid_size = 13, anchors = 5, lambda_coord_xy = 200, lambda_coord_wh = 0.2, lambda_coord_noobj_xy = 0.05, lambda_coord_noobj_wh = 0.00001, lambda_conf = 200, lambda_noobj = 0.2):
         super(YoloLoss2, self).__init__()
@@ -120,8 +165,8 @@ class YoloLoss2(nn.Module):
         W_grid, H_grid = self.grid_size, self.grid_size
         predictions = predictions.view(-1, H_grid, W_grid, self.num_anchors, 4+1+self.num_classes)
 
-        pred_xy, pred_wh, pred_obj_prob, _ = post_process_output(predictions, self.anchors, self.num_anchors, self.device)
-        true_xy, true_wh, true_obj_prob, _ = post_process_target(target)
+        pred_xy, pred_wh, pred_obj_prob = post_process_output(predictions, self.anchors, self.num_anchors, self.device)
+        true_xy, true_wh, true_obj_prob = post_process_target(target)
         
         # Calculate areas of pred_bbox
         pred_ul = pred_xy - 0.5*pred_wh

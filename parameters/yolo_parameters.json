@@ -30,5 +30,7 @@
     "lambda_xy": 100,
     "lambda_wh": 0.1,
     "lambda_conf": 10,
-    "lambda_noobj": 1
+    "lambda_noobj": 1,
+    "grid_size": 13,
+    "input_size":416
 }

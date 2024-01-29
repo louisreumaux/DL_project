@@ -12,6 +12,10 @@ import math
 import matplotlib.pyplot as plt
 from utils import find_anchors
 
+'''
+This script trains a YOLOv2 model on a custom dataset using transfer learning from a pre-trained Darknet19 model.
+'''
+
 with open('parameters/yolo_parameters.json', 'r') as f:
     parameters = json.load(f)
 
@@ -40,32 +44,30 @@ images_folder = "data_yolo/training_images/"
 model = YOLO(num_classes,anchors)
 darknet19 = Darknet19()
 
-# Charger les poids de Darknet19 pré-entraîné
+# Loading weights
 
 yolo_weight_folder = "net/yolo_weights/"
 darknet_weight_folder = "net/darknet_weights/"
 darknet19_weights_path = "darknet19_classification_model_finetuned.pth"
 darknet19.load_state_dict(torch.load(darknet_weight_folder + darknet19_weights_path))
 
-# Transférer les poids jusqu'à une couche commune (à ajuster selon votre architecture)
+# Transfer the weights up to a common layer (to be adjusted according to your architecture)
 model.features_1.load_state_dict(darknet19.features_1.state_dict())
 model.features_2.load_state_dict(darknet19.features_2.state_dict())
 model.max_pool.load_state_dict(darknet19.max_pool.state_dict())
-
-# Print the model summary
 print(model)
 
 with open('data_yolo/dictionnary_bounding_boxes.pkl', 'rb') as fp:
     data_bounding_boxes = pickle.load(fp)
 
-# Créez une instance de votre dataset
+# Load Dataset and Prepare DataLoader
 
 train_dataset = CarDataset(data=data_bounding_boxes, input_size=416, images_folder=images_folder)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Définition de la fonction de perte et de l'optimiseur
+# Load Dataset and Prepare DataLoader
 criterion = YoloLoss(num_classes, device, lambda_xy=lambda_xy, lambda_wh=lambda_wh, lambda_conf=lambda_conf, lambda_noobj=lambda_noobj, anchors=anchors)
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=momentum, nesterov=True)
 
@@ -104,20 +106,12 @@ def train_model(num_epochs, saving_path = "yolo_model.pth"):
                     g['lr'] = lr
             
 
-            # Mise à zéro des gradients
             optimizer.zero_grad()
-
-            # Passage avant
             outputs = model(inputs)
 
-
-            # Calcul de la perte
             loss,loss_detail = criterion(outputs, labels)
-
-            # Rétropropagation des gradients
             loss.backward()
 
-            # Mise à jour des poids
             optimizer.step()
  
             running_loss += loss.item()
@@ -128,11 +122,8 @@ def train_model(num_epochs, saving_path = "yolo_model.pth"):
 
             iters += 1
 
-        #lr_scheduler.step()
         end_time = time.time()
         epoch_time = end_time - start_time
-
-        # Affichage de la perte moyenne par époque
         average_loss = running_loss / len(train_loader)
 
         print(
@@ -155,14 +146,14 @@ def train_model(num_epochs, saving_path = "yolo_model.pth"):
     plt.show()
 
     plt.plot(epochs, log_losses, marker='o')
-    plt.title('Loss evolution')
+    plt.title('Log loss evolution')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.show()
 
 
 if __name__ == "__main__":
-    saving_path = yolo_weight_folder + "yolo_model_v2.pth"
+    saving_path = yolo_weight_folder + "yolo_model_v100.pth"
     train_model(num_epochs, saving_path)
 
 

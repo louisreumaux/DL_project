@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 import cv2
+import json
 import numpy as np
 from shapely.geometry import Polygon
 import pickle
@@ -8,35 +9,17 @@ import albumentations as A
 from albumentations.pytorch.transforms import ToTensor, ToTensorV2
 from PIL import Image
 from sklearn.cluster import KMeans
+from sklearn.metrics import precision_score, recall_score
 
+with open('parameters/yolo_parameters.json', 'r') as f:
+    parameters = json.load(f)
 
-BOX_COLOR = (0, 0, 255)
-S = 13 
-BOX = 5 
-CLS = 2 
-H, W = 416, 416
-OUTPUT_THRESH = 0.6
-ANCHOR_BOXS = [[
-            56.448586925137235,
-            42.758431397356944
-        ],
-        [
-            104.07292781091715,
-            74.05125952405875
-        ],
-        [
-            73.9442156753153,
-            54.508589646511204
-        ],
-        [
-            32.10578740924305,
-            37.558116701887016
-        ],
-        [
-            169.09191681233446,
-            119.81162735479455
-        ]]
+anchors = parameters["anchors"]
 
+nb_anchors = len(anchors)
+nb_classes = parameters["classes"]
+input_size = parameters["input_size"]
+grid_size = parameters["grid_size"]
 
 
 def plot_img(img, size=(7,7)):
@@ -44,7 +27,10 @@ def plot_img(img, size=(7,7)):
     plt.imshow(img[:,:,::-1])
     plt.show()
     
-def visualize_bbox(img, boxes, thickness=2, color=BOX_COLOR, draw_center=True):
+def visualize_bbox(img, boxes, thickness=2, color=(0, 0, 255), draw_center=True):
+    '''
+    Draw the rectangles described in boxes on the image img.
+    '''
     img_copy = img.cpu().permute(1,2,0).numpy() if isinstance(img, torch.Tensor) else img.copy()
     for box in boxes:
         x,y,w,h = int(box[0]), int(box[1]), int(box[2]), int(box[3])
@@ -59,22 +45,27 @@ def visualize_bbox(img, boxes, thickness=2, color=BOX_COLOR, draw_center=True):
 
 
 
-
-
-def target_tensor_to_boxes(boxes_tensor):
+def target_tensor_to_boxes(boxes_tensor, output_thresh = 0.6, grid_size=grid_size, input_size=input_size):
     '''
-    Recover target tensor (tensor output of dataset) to bboxes
+    Convert target tensor to bounding boxes.
+    
+    Args:
+        boxes_tensor (torch.Tensor): Target tensor containing bounding box information.
+        output_thresh (float): Threshold for considering object presence.
+        grid_size (int): Size of the grid used for dividing the image.
+        input_size (int): Size of the input image.
+        
+    Returns:
+        numpy.ndarray: Bounding boxes extracted from the target tensor.
     '''
-    cell_w, cell_h = W/S, H/S
+    cell_w, cell_h = input_size/grid_size, input_size/grid_size
     boxes = []
-    for i in range(S):
-        for j in range(S):
+    for i in range(grid_size):
+        for j in range(grid_size):
             data = boxes_tensor[i,j,0]
-            #x_center,y_center, w, h, obj_prob, cls_prob = data[0], data[1], data[2], data[3], data[4], data[5:]
-            #prob = obj_prob*max(cls_prob)
             x_center,y_center, w, h, obj_prob = data[0], data[1], data[2], data[3], data[4]
             prob = obj_prob
-            if prob > OUTPUT_THRESH:
+            if prob > output_thresh:
                 x, y = (x_center+j)*cell_w-w/2, (y_center+i)*cell_h-h/2
                 box = [x,y,w,h]
                 boxes.append(box)
@@ -83,17 +74,22 @@ def target_tensor_to_boxes(boxes_tensor):
 
 
 
-def boxes_to_tensor(boxes, obj_prob):
+def boxes_to_tensor(boxes, grid_size=grid_size, nb_anchors=nb_anchors, input_size=input_size, nb_classes=nb_classes):
     '''
-    Build the target tensor from bboxes coordinates
+    Build the target tensor from bounding box coordinates.
+    
+    Args:
+        boxes (list): List of bounding boxes.
+        grid_size (int): Size of the grid used for dividing the image.
+        nb_anchors (int): Number of anchors.
+        input_size (int): Size of the input image.
+        nb_classes (int): Number of classes.
+        
+    Returns:
+        torch.Tensor: Target tensor containing bounding box information.
     '''
-    S = 13
-    BOX = 5
-    CLS = 0
-    W = 416
-    H = 416
-    boxes_tensor = torch.zeros((S , S, BOX, 5+CLS))
-    cell_w, cell_h = W/S, H/S
+    boxes_tensor = torch.zeros((grid_size , grid_size, nb_anchors, 5+nb_classes))
+    cell_w, cell_h = input_size/grid_size, input_size/grid_size
     for i, box in enumerate(boxes):
         x,y,w,h = box
         center_x, center_y = x+w/2, y+h/2
@@ -101,42 +97,66 @@ def boxes_to_tensor(boxes, obj_prob):
         grid_x = int(np.floor(center_x))
         grid_y = int(np.floor(center_y))
         
-        if grid_x < S and grid_y < S:
-            boxes_tensor[grid_y, grid_x, :, 0:4] = torch.tensor(BOX * [[center_x-grid_x,center_y-grid_y,w,h]])
-            boxes_tensor[grid_y, grid_x, :, 4]  = torch.tensor(BOX * [obj_prob])
-            #boxes_tensor[grid_y, grid_x, :, 5:]  = torch.tensor(np.array(BOX*[labels[i].numpy()]))
+        if grid_x < grid_size and grid_y < grid_size:
+            boxes_tensor[grid_y, grid_x, :, 0:4] = torch.tensor(nb_anchors * [[center_x-grid_x,center_y-grid_y,w,h]])
+            boxes_tensor[grid_y, grid_x, :, 4]  = torch.tensor(nb_anchors * [1.])
     return boxes_tensor
 
 
 
-def output_tensor_to_boxes(boxes_tensor):
+def output_tensor_to_boxes(boxes_tensor, anchors, output_thresh = 0.6, grid_size=grid_size, nb_anchors=nb_anchors, input_size=input_size, nb_classes=nb_classes):
     '''
-    Recover output tensor to bboxes
+    Convert output tensor to bounding boxes.
+    
+    Args:
+        boxes_tensor (torch.Tensor): Output tensor containing bounding box information.
+        anchors (list): List of anchor box sizes.
+        output_thresh (float): Threshold for considering object presence.
+        grid_size (int): Size of the grid used for dividing the image.
+        nb_anchors (int): Number of anchors.
+        input_size (int): Size of the input image.
+        nb_classes (int): Number of classes.
+        
+    Returns:
+        numpy.ndarray: Bounding boxes extracted from the output tensor.
     '''
-    cell_w, cell_h = W/S, H/S
+    cell_w, cell_h = input_size/grid_size, input_size/grid_size
     boxes = []
     
-    for i in range(S):
-        for j in range(S):
-            for b in range(BOX):
-                anchor_wh = torch.tensor(ANCHOR_BOXS[b])
+    for i in range(grid_size):
+        for j in range(grid_size):
+            for b in range(nb_anchors):
+                anchor_wh = torch.tensor(anchors[b])
                 data = boxes_tensor[i,j,b]
                 xy = torch.sigmoid(data[:2])
                 wh = ((torch.sigmoid(data[2:4]) * 2) ** 1.6) * anchor_wh
 
                 obj_prob = torch.sigmoid(data[4:5])
                 
-                if obj_prob > OUTPUT_THRESH:
+                if obj_prob > output_thresh:
                     x_center, y_center, w, h = xy[0], xy[1], wh[0], wh[1]
                     x, y = (x_center+j)*cell_w-w/2, (y_center+i)*cell_h-h/2
                     box = [x,y,w,h, obj_prob]
-                    boxes.append(box)
+                    boxes.append(box)   
 
     return torch.Tensor(boxes).numpy()
 
 def compute_output_iou(pred_boxes, true_boxes, iou_threshold):
+
     '''
-    In this function, we compute the boxes well predicted as well as the coordinate of the boxes we predicted well
+    Compute the Intersection over Union (IoU) between predicted boxes and ground truth boxes to compute which boxes are well predicted.
+
+    Args:
+        pred_boxes (np.ndarray): Predicted bounding boxes.
+        true_boxes (np.ndarray): Ground truth bounding boxes.
+        iou_threshold (float): IoU threshold to consider a prediction as true positive.
+
+    Returns:
+        tuple:
+            - pred_y (list): Binary labels for predicted boxes (1 for true positive, 0 otherwise).
+            - true_y (list): Binary labels for ground truth boxes (1 for present, 0 otherwise).
+            - wh_boxes_well_predicted (list): Width and height of well predicted bounding boxes.
+            - wh_boxes (list): Width and height of all ground truth bounding boxes.
     '''
     pred_y = []
     true_y = []
@@ -174,8 +194,16 @@ def compute_output_iou(pred_boxes, true_boxes, iou_threshold):
 
 def calculate_iou(box_1, box_2):
     '''
-    Computation of IoU
+    Calculate Intersection over Union (IoU) between two bounding boxes.
+
+    Args:
+        box_1 (list): Bounding box coordinates [x, y, width, height].
+        box_2 (list): Bounding box coordinates [x, y, width, height].
+
+    Returns:
+        float: Intersection over Union (IoU) score.
     '''
+
     box_1 = [[box_1[0], box_1[1]],[box_1[0], box_1[1]+box_1[3]], [box_1[0] + box_1[2], box_1[1]+box_1[3]],[box_1[0] + box_1[2], box_1[1]]]
     box_2 = [[box_2[0], box_2[1]],[box_2[0], box_2[1]+box_2[3]], [box_2[0] + box_2[2], box_2[1]+box_2[3]],[box_2[0] + box_2[2], box_2[1]]]
     poly_1 = Polygon(box_1)
@@ -186,6 +214,16 @@ def calculate_iou(box_1, box_2):
     return iou
 
 def nonmax_suppression(boxes, IOU_THRESH = 0.3):
+    '''
+    Perform non-maximum suppression (NMS) on bounding boxes.
+
+    Args:
+        boxes (list): List of bounding boxes.
+        IOU_THRESH (float): IoU threshold for suppression (default is 0.3).
+
+    Returns:
+        np.ndarray: Bounding boxes after non-maximum suppression.
+    '''
     boxes = sorted(boxes, key=lambda x: x[4], reverse=True)
     for i, current_box in enumerate(boxes):
         if current_box[4] <= 0:
@@ -199,7 +237,14 @@ def nonmax_suppression(boxes, IOU_THRESH = 0.3):
 
 def ap_computation(labels, predictions):
     '''
-    Computation of the average precision given the labels and the predictions
+    Compute the average precision (AP) given ground truth labels and predictions.
+
+    Args:
+        labels (list): Ground truth labels (1 for positive, 0 for negative).
+        predictions (list): Predicted scores.
+
+    Returns:
+        float: Average precision (AP).
     '''
     precision = []
     recall = []
@@ -227,7 +272,7 @@ def ap_computation(labels, predictions):
 
 def find_anchors():
     '''
-    Computation of the anchor boxes given the 
+    Computation of the anchor boxes
     '''
     transforms = A.Compose([
         A.Resize(height=416, width=416),
@@ -265,7 +310,6 @@ def find_anchors():
 
     bbox_wh = np.array(bbox_wh)
 
-    # K-means
     kmeans = KMeans(n_clusters=5, random_state=42)
     kmeans.fit(bbox_wh)
 
@@ -284,3 +328,87 @@ def find_anchors():
     return anchors.tolist()
 
 
+def plot_width_height_graph(bboxes_wh, bboxes_wh_well_predicted):
+    '''
+    Plot a graph of the bounding boxes of cars given their sizes (height, width).
+    In green its the cars well predicted (bboxes_wh_well_predicted), in red the cars not well predicted (bboxes_wh - bboxes_wh_well_predicted)
+    '''
+    bboxes_wh = np.array(bboxes_wh)
+    bboxes_wh_well_predicted = np.array(bboxes_wh_well_predicted)
+
+    x = np.linspace(0, 200, 400)
+    y = np.linspace(0, 160, 400)
+
+    X, Y = np.meshgrid(x, y)
+
+    Z = X * Y
+
+    mask_small_obj = Z < 32**2
+    mask_medium_obj =  (32**2 <= Z) & (Z < 96**2)
+    mask_large_obj = 96**2 <= Z 
+
+    plt.figure(figsize=(8, 8))
+
+    plt.pcolormesh(X, Y, mask_small_obj, cmap='viridis', shading='auto', alpha=0.5)
+    plt.pcolormesh(X, Y, mask_medium_obj, cmap='viridis', shading='auto', alpha=0.5)
+    plt.pcolormesh(X, Y, mask_large_obj, cmap='viridis', shading='auto', alpha=0.5)
+
+
+    plt.scatter(bboxes_wh[:, 0], bboxes_wh[:, 1], alpha=0.5, edgecolors='w', color='red')
+    plt.scatter(bboxes_wh_well_predicted[:, 0], bboxes_wh_well_predicted[:, 1], linewidths=1,edgecolors='w', color='green')
+    plt.title('Localisation of well predicted boxes')
+    plt.xlabel('Width')
+    plt.ylabel('Height')
+
+    plt.show()
+
+
+def mean_avg_precision(model,device,test_loader, iou_threshold, anchors):
+    '''
+    Calculate the mean Average Precision (mAP) for object detection models.
+
+    Args:
+        model (torch.nn.Module): The object detection model to evaluate.
+        device (torch.device): The device to perform computations on.
+        test_loader (torch.utils.data.DataLoader): DataLoader for the test dataset.
+        iou_threshold (float): The IoU threshold for considering a detection as correct.
+        anchors (list): List of anchor box sizes.
+
+    Returns:
+        tuple: A tuple containing:
+            - AP (float): Mean Average Precision (mAP) score.
+            - precision (float): Precision score.
+            - recall (float): Recall score.
+            - wh_boxes_well_predicted (list): Width and height of well predicted bounding boxes.
+            - wh_boxes (list): Width and height of all ground truth bounding boxes.
+    '''
+    predictions = []
+    labels = []
+    wh_boxes_well_predicted = []
+    wh_boxes = []
+    for inputs, targets in test_loader:
+        inputs, targets = inputs.to(device), targets.to(device)
+        outputs = model(inputs)
+        for i in range(len(outputs)):
+            output_tensor = outputs[i].detach().cpu()
+            output_tensor = output_tensor.permute(1,2,0)
+            output_tensor = output_tensor.view(13, 13, 5, 5)
+
+            target_tensor = targets[i].detach().cpu()
+
+            pred_boxes = output_tensor_to_boxes(output_tensor, anchors)
+            pred_boxes = nonmax_suppression(pred_boxes,0.2)
+
+            true_boxes = target_tensor_to_boxes(target_tensor)
+
+            pred_y, true_y, wh_boxes_well_predicted_i, wh_boxes_i = compute_output_iou(pred_boxes, true_boxes, iou_threshold)
+
+            predictions += pred_y
+            labels += true_y
+            wh_boxes_well_predicted += wh_boxes_well_predicted_i
+            wh_boxes += wh_boxes_i
+
+    AP = ap_computation(labels, predictions)
+    precision = precision_score(labels, predictions)
+    recall = recall_score(labels, predictions)
+    return AP, precision, recall, wh_boxes_well_predicted, wh_boxes
